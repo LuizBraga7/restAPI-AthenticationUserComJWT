@@ -1,58 +1,74 @@
-from sql_alchemy import banco  # Importa a instância do banco de dados.
+from flask_restful import Resource, reqparse
+from models.usuario import UsuarioModel
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt
+import hmac
+from blacklist import BLACKLIST
 
-class UsuarioModel(banco.Model):
-    """
-    Representa um modelo para a tabela 'usuarios' no banco de dados.
-    """
+# Definindo os parâmetros necessários para os métodos POST (login e senha)
+atributos = reqparse.RequestParser()
+atributos.add_argument('login', type=str, required=True, help='O campo login não pode ser deixado em branco')
+atributos.add_argument('senha', type=str, required=True, help='O campo senha não pode ser deixado em branco')
 
-    # Define o nome da tabela.
-    __tablename__ = 'usuarios'
 
-    # Define as colunas da tabela.
-    user_id = banco.Column(banco.Integer, primary_key=True)  # ID único do usuário.
-    login = banco.Column(banco.String(40))  # Login do usuário.
-    senha = banco.Column(banco.String(40))  # Senha do usuário.
+# Classe para manipulação de usuários (GET, DELETE)
+class User(Resource):
+    def get(self, user_id):
+        # Procura um usuário pelo ID
+        user = UsuarioModel.find_user(user_id)
+        if user:
+            return user.json(), 200  # Retorna o usuário em formato JSON
+        return {'message': 'User not found'}, 404  # Se não encontrado, retorna erro
 
-    def __init__(self, login, senha):
-        """
-        Inicializa os atributos do usuário.
-        """
-        self.login = login
-        self.senha = senha
+    @jwt_required()  # Requer autenticação JWT para o DELETE
+    def delete(self, user_id):
+        # Exclui um usuário pelo ID
+        user = UsuarioModel.find_user(user_id)
+        if user:
+            try:
+                user.delete_user()  # Tenta deletar o usuário
+            except:
+                return {'message': 'Erro interno ao tentar deletar dados do banco'}, 500  # Erro no banco
+            return {'message': f"user {user.json().get('login')} deleted"}  # Sucesso
+        return {'message': 'User not found.'}, 404  # Usuário não encontrado
 
-    def json(self):
-        """
-        Retorna os dados do usuário no formato JSON.
-        """
-        return {
-            'user_id': self.user_id,  # Identificador único do usuário.
-            'login': self.login       # Login do usuário (não retorna a senha por segurança).
-        }
-    
+
+# Classe para registrar um novo usuário
+class UserRegister(Resource):
+    def post(self):
+        # Recebe os dados do POST
+        dados = atributos.parse_args()
+        
+        # Verifica se o login já existe
+        if UsuarioModel.find_by_login(dados['login']):
+            return {'message': f"The login {dados['login']} already exists."}, 400  # Erro se login já existir
+
+        # Cria e salva o novo usuário
+        user = UsuarioModel(**dados)
+        user.save_user()
+        return {'message': 'User created successfully!'}, 201  # Usuário criado com sucesso
+
+
+# Classe para realizar o login do usuário
+class UserLogin(Resource):
     @classmethod
-    def find_user(cls, user_id):
-        """
-        Busca um usuário pelo ID.
-        """
-        return cls.query.filter_by(user_id=user_id).first()
-    
-    @classmethod
-    def find_by_login(cls, login):
-        """
-        Busca um usuário pelo login.
-        """
-        return cls.query.filter_by(login=login).first()
+    def post(cls):
+        # Recebe os dados do POST (login e senha)
+        dados = atributos.parse_args()
+        
+        # Verifica se o usuário existe e se a senha está correta
+        user = UsuarioModel.find_by_login(dados['login'])
+        if user and hmac.compare_digest(user.senha, dados['senha']):
+            # Cria o token de acesso JWT se as credenciais forem válidas
+            token_de_acesso = create_access_token(identity=str(user.user_id))
+            return {'access_token': token_de_acesso}, 200  # Retorna o token
+        return {'message': 'The username or password is incorrect'}, 401  # Erro de autenticação
 
-    def save_user(self):
-        """
-        Salva o usuário no banco de dados.
-        """
-        banco.session.add(self)
-        banco.session.commit()
-    
-    def delete_user(self):
-        """
-        Remove o usuário do banco de dados.
-        """
-        banco.session.delete(self)
-        banco.session.commit()
+
+# Classe para realizar o logout do usuário
+class UserLogout(Resource):
+    @jwt_required()  # Requer autenticação JWT para o POST
+    def post(self):
+        # Adiciona o token JWT à lista negra para invalidar
+        jwt_id = get_jwt()['jti']  # JWT Token Identifier
+        BLACKLIST.add(jwt_id)
+        return {'message': 'Logged out successfully!'}, 200  # Sucesso no logout

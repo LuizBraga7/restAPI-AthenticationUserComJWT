@@ -1,61 +1,35 @@
-from sql_alchemy import banco  # Importa a instância do banco de dados.
+from flask_restful import Resource
+from models.site import SiteModel
 
-class SiteModel(banco.Model):
-    """
-    Representa um modelo para a tabela 'sites' no banco de dados.
-    """
+# Classe para manipulação dos sites (GET, POST, DELETE)
+class Sites(Resource):
+    def get(self):
+        # Retorna todos os sites registrados no banco
+        return {'sites': [site.json() for site in SiteModel.query.all()]}
 
-    # Define o nome da tabela.
-    __tablename__ = 'sites'
+class Site(Resource):
+    def get(self, url):
+        # Procura um site pelo URL e retorna seus dados ou mensagem de erro
+        site = SiteModel.find_site(url)
+        if site:
+            return site.json()
+        return {'message': f'Site {url} not found'}, 404  # Caso não encontrado
 
-    # Define as colunas da tabela.
-    site_id = banco.Column(banco.Integer, primary_key=True)  # ID único do site.
-    url = banco.Column(banco.String(80))  # URL do site.
-    hoteis = banco.relationship('HotelModel')  # Relacionamento com os hotéis.
+    def post(self, url):
+        # Cria um novo site se ele não existir
+        if SiteModel.find_site(url):
+            return {'message': 'The site already exists'}, 400  # Caso o site já exista
+        site = SiteModel(url)
+        try:
+            site.save_site()  # Tenta salvar o site
+        except:
+            return {'message': 'Internal error occurred while creating the site'}, 500  # Erro no servidor
+        return site.json()  # Retorna o site criado
 
-    def __init__(self, url):
-        """
-        Inicializa os atributos do site.
-        """
-        self.url = url
-
-    def json(self):
-        """
-        Retorna os dados do site no formato JSON, incluindo os hotéis relacionados.
-        """
-        return {
-            'site_id': self.site_id,
-            'url': self.url,
-            'hoteis': [hotel.json() for hotel in self.hoteis]  # Lista de hotéis do site.
-        }
-    
-    @classmethod
-    def find_site(cls, url):
-        """
-        Busca um site pelo URL.
-        """
-        return cls.query.filter_by(url=url).first()
-    
-    @classmethod
-    def find_by_id(cls, site_id):
-        """
-        Busca um site pelo ID.
-        """
-        return cls.query.filter_by(site_id=site_id).first()
-
-    def save_site(self):
-        """
-        Salva o site no banco de dados.
-        """
-        banco.session.add(self)
-        banco.session.commit()
-    
-    def delete_site(self):
-        """
-        Remove o site e todos os hotéis associados do banco de dados.
-        """
-        # Remove os hotéis relacionados ao site.
-        [hotel.delete_hotel() for hotel in self.hoteis]
-        # Remove o site.
-        banco.session.delete(self)
-        banco.session.commit()
+    def delete(self, url):
+        # Exclui o site baseado no URL
+        site = SiteModel.find_site(url)
+        if site:
+            site.delete_site()  # Exclui o site do banco
+            return {'message': f'Site {site.url} deleted successfully'}
+        return {'message': 'Site not found'}, 404  # Caso o site não seja encontrado
